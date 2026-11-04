@@ -6,3 +6,6 @@
 !/test_ledger.py
 !/LICENSE
 !/README.md
+!/board.py
+!/flow.py
+!/test_flow.py

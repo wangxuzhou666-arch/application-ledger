@@ -38,3 +38,15 @@ If you applied yourself, use `submitted-elsewhere Example R1 user "Applicant con
 Run `python3 -B -m unittest -v`. The tests use an in-memory database. Private files belong outside the checkout. The Git allowlist is an extra guard.
 
 Design references: [Muse application workflow](https://github.com/Dark417/muse-auto-job-apply) for queued browser tasks; [JobOps](https://github.com/DaKheera47/job-ops) for separating discovery and post-application tracking; [Job Application Tracker](https://github.com/waddington/job-application-tracker) for recording multiple interview rounds. This implementation does not vendor code from those projects. Public discovery uses the [Greenhouse](https://docs.greenhouse.io/job-board.html) and [Ashby](https://developers.ashbyhq.com/docs/public-job-posting-api) board APIs.
+
+## Batch discovery, review packets and offline board
+
+Run `python3 flow.py scan sources.json` with a private configuration such as the following. Scans run concurrently, retain per-board errors and add new leads to the ledger. Source counts refer to fetched public listings, not verified matches. The community feed discovers additional employer boards; subsequent runs rotate through up to three of them. Specify a country explicitly to restrict the intake. US mode requires a recognizable US location; unqualified remote listings stay out.
+
+```json
+{"include":"(?i)product engineer|associate product manager|agent engineer","exclude":"(?i)intern|senior","country":"US","sources":[{"provider":"community","board":"simplify-new-grad"},{"provider":"lever","board":"palantir","company":"Palantir"}]}
+```
+
+Supported sources include Greenhouse, Ashby, [Lever](https://github.com/lever/postings-api), [SmartRecruiters](https://developers.smartrecruiters.com/docs/posting-api) and the public [Simplify new graduate listings](https://github.com/SimplifyJobs/New-Grad-Positions). Treat external aggregators as discovery data. Verify the posting, eligibility, start date and minimum base pay at the employer before preparing a packet.
+
+After verifying a lead, create a private JSON file with string fields `company, req, summary, eligibility, baseline, changes, pdf`. Supply the official URL on the job record. Use `python3 flow.py packet packet.json` and `python3 board.py pipeline.html` to put the JD summary, eligibility evidence and clickable final PDF side by side. After the applicant approves specific packets, use `python3 flow.py approve TOKEN [TOKEN ...]`. A batch is atomic; changing the summary or attachment invalidates the old version. Continue with the existing begin and receipt commands. Refresh the HTML after changes; it is a private, searchable snapshot. Every CLI accepts `--db PATH` before its other arguments.
