@@ -1,0 +1,8 @@
+*
+!/.gitignore
+!/ledger.py
+!/discover.py
+!/fill-reviewed-fields.js
+!/test_ledger.py
+!/LICENSE
+!/README.md
