@@ -84,6 +84,21 @@ document.querySelector("#run").onclick=async()=>{
   assert(r.status==="verified" && r.verified===5,JSON.stringify(r));
   assert(document.querySelector("#first").value==="Synthetic","Parser overwrite not repaired");
  });
+ await test("Text answer never resolves to a same-label checkbox option",async()=>{
+  form("greenhouse",{extra:'<fieldset><legend>How did you hear about us?</legend><label><input type="checkbox" id="heard-li">LinkedIn</label></fieldset>'});
+  const r=await LedgerPrep.prepare(await payload("greenhouse",[...fields,{label:"LinkedIn",kind:"text",value:"https://example.invalid/in/synthetic"}]),{testURL:URLS.greenhouse});
+  assert(r.status==="verified" && r.matched===5 && r.pending===0,JSON.stringify(r));
+  assert(!document.querySelector("#heard-li").checked,"Checkbox option was touched");
+ });
+ await test("Reformatted phone digits read back as the same number; other digits do not",async()=>{
+  const tel='<label for="tel">Phone</label><input id="tel" type="tel" oninput="this.value=this.value.replace(/^(\\d{3})(\\d{3})(\\d{4})$/,\'($1) $2-$3\')">';
+  form("greenhouse",{extra:tel});
+  let r=await LedgerPrep.prepare(await payload("greenhouse",[...fields,{label:"Phone",kind:"text",value:"2155550123"}]),{testURL:URLS.greenhouse});
+  assert(document.querySelector("#tel").value==="(215) 555-0123" && r.status==="verified" && r.pending===0,JSON.stringify(r));
+  form("greenhouse",{extra:tel.replace("$1) $2-$3","999) $2-$3")});
+  r=await LedgerPrep.prepare(await payload("greenhouse",[...fields,{label:"Phone",kind:"text",value:"2155550123"}]),{testURL:URLS.greenhouse});
+  assert(r.pending===1 && r.status==="needs_attention",JSON.stringify(r));
+ });
  await test("Ashby: bound combobox and field readback",async()=>{
   form("ashby");const r=await LedgerPrep.prepare(await payload("ashby"),{testURL:URLS.ashby});
   assert(r.status==="verified" && r.verified===6,JSON.stringify(r));

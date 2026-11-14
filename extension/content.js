@@ -70,6 +70,15 @@
    if(button.form!==null)throw Error("unsafe_button");
    return button;
  }
+ // An answer only matches a control of its own kind, so a text answer never resolves to a
+ // checkbox option that happens to share its label (measured: "LinkedIn" under "How did you hear").
+ const TEXTLESS=["file","hidden","checkbox","radio","button","submit","reset","image","password"];
+ function fits(el,kind) {
+   if(kind==="text")return el.tagName==="TEXTAREA" || (el.tagName==="INPUT" && !TEXTLESS.includes(el.type) && el.getAttribute("role")!=="combobox");
+   if(kind==="select")return el.tagName==="SELECT";
+   if(kind==="combobox")return el.getAttribute("role")==="combobox";
+   return true;
+ }
  function resolve(field) {
    if(protectedLabel(field.label))throw Error("protected");
    if(field.kind==="yesno")return yesnoButton(field);
@@ -80,7 +89,7 @@
      if(groups.size!==1 || chosen.length!==1)throw Error("ambiguous_radio");
      return chosen[0];
    }
-   const hits=controls().filter(el=>el.type!=="radio" && label(el)===norm(field.label));
+   const hits=controls().filter(el=>el.type!=="radio" && fits(el,field.kind) && label(el)===norm(field.label));
    if(hits.length!==1)throw Error("missing_or_ambiguous");
    return hits[0];
  }
@@ -100,6 +109,16 @@
    return el.value;
  }
  const expected=field=>field.kind==="text"?field.value:norm(field.value);
+ // Phone inputs reformat digits ("(267) 231-4745"), and Greenhouse's phone-country picker shows only
+ // the dial code ("+1") of the chosen option "United States +1" (both measured 2026-11-14).
+ const digits=s=>String(s||"").replace(/\D/g,"");
+ function same(el,field) {
+   const got=actual(el,field),want=expected(field);
+   if(got===want)return true;
+   if(field.kind==="text" && el.type==="tel")return digits(got).length>=7 && digits(want).endsWith(digits(got));
+   if(field.kind==="combobox" && /^\+\d{1,4}$/.test(got))return want.endsWith(" "+got);
+   return false;
+ }
  function setText(el,value,{focusout=true}={}) {
    if(!["INPUT","TEXTAREA"].includes(el.tagName) || ["file","hidden","checkbox","radio","button","submit","password"].includes(el.type) || el.readOnly)
      throw Error("unsupported_text");
@@ -167,7 +186,7 @@
    } else throw Error("unsupported_kind");
    await wait(70);
    assertPage();el=resolve(field);
-   if(actual(el,field)!==expected(field))throw Error("readback_mismatch");
+   if(!same(el,field))throw Error("readback_mismatch");
  }
  function resumeCandidates(provider) {
    const all=[...document.querySelectorAll("input[type=file]")].filter(el=>!el.disabled);
@@ -303,7 +322,7 @@
      for(const field of payload.fields) {
        // Absent common fields are ignored. Duplicate matches are a pending error.
        const exists=field.kind==="yesno" ? yesnoGroups().some(g=>blockLabel(blockOf(g))===norm(field.label)) :
-         controls().some(el=>label(el)===norm(field.label) || (field.kind==="radio" && groupLabel(el)===norm(field.label)));
+         controls().some(el=>(label(el)===norm(field.label) && fits(el,field.kind)) || (field.kind==="radio" && groupLabel(el)===norm(field.label)));
        if(!exists)continue;
        result.matched++;
        const entry={field,ok:true,reason:null};entries.push(entry);
@@ -315,7 +334,7 @@
      for(const entry of entries) {
        try {
          const el=resolve(entry.field);resolved.add(el);
-         entry.ok=actual(el,entry.field)===expected(entry.field) && el.getAttribute("aria-invalid")!=="true" && (!el.validity || el.validity.valid);
+         entry.ok=same(el,entry.field) && el.getAttribute("aria-invalid")!=="true" && (!el.validity || el.validity.valid);
        } catch {entry.ok=false;}
        if(!entry.ok)reasons.add(entry.reason||"field_readback_failed");
      }
