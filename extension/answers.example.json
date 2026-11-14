@@ -1,0 +1,40 @@
+{
+  "common": [
+    {
+      "label": "First Name",
+      "kind": "text",
+      "value": "Synthetic",
+      "confirmed": true
+    },
+    {
+      "label": "Email",
+      "kind": "text",
+      "value": "test@example.invalid",
+      "confirmed": true
+    }
+  ],
+  "jobs": {
+    "greenhouse/example/123": [
+      {
+        "label": "Future sponsorship",
+        "kind": "select",
+        "value": "Yes",
+        "confirmed": true
+      },
+      {
+        "label": "Are you open to relocation?",
+        "kind": "combobox",
+        "value": "Yes",
+        "confirmed": true
+      }
+    ],
+    "ashby/example/12345678-1234-1234-1234-123456789abc": [
+      {
+        "label": "Are you able to work onsite three days a week?",
+        "kind": "yesno",
+        "value": "No",
+        "confirmed": true
+      }
+    ]
+  }
+}

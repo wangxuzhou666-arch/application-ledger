@@ -1,0 +1,33 @@
+{
+  "protected": [
+    "Privacy Policy",
+    "I agree",
+    "I agree to the terms",
+    "Electronic signature",
+    "E-signature",
+    "Veteran status",
+    "Race/Ethnicity",
+    "Are you Hispanic/Latino?",
+    "Gender identity",
+    "Disability status",
+    "I certify that the above is true",
+    "Consent to SMS updates",
+    "Attestation",
+    "Sex",
+    "Sexual orientation",
+    "Transgender",
+    "CAPTCHA"
+  ],
+  "fillable": [
+    "Email",
+    "How do you embrace ambiguity?",
+    "Certifications",
+    "Licenses and certifications",
+    "Agency name",
+    "Design portfolio",
+    "Graceful degradation experience",
+    "Sussex office",
+    "Latin America experience",
+    "Are you open to relocation?"
+  ]
+}

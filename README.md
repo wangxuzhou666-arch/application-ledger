@@ -50,3 +50,10 @@ Run `python3 flow.py scan sources.json` with a private configuration such as the
 Supported sources include Greenhouse, Ashby, [Lever](https://github.com/lever/postings-api), [SmartRecruiters](https://developers.smartrecruiters.com/docs/posting-api) and the public [Simplify new graduate listings](https://github.com/SimplifyJobs/New-Grad-Positions). Treat external aggregators as discovery data. Verify the posting, eligibility, start date and minimum base pay at the employer before preparing a packet.
 
 After verifying a lead, create a private JSON file with string fields `company, req, summary, eligibility, baseline, changes, pdf`. Supply the official URL on the job record. Use `python3 flow.py packet packet.json` and `python3 board.py pipeline.html` to put the JD summary, eligibility evidence and clickable final PDF side by side. After the applicant approves specific packets, use `python3 flow.py approve TOKEN [TOKEN ...]`. A batch is atomic; changing the summary or attachment invalidates the old version. Continue with the existing begin and receipt commands. Refresh the HTML after changes; it is a private, searchable snapshot. Every CLI accepts `--db PATH` before its other arguments.
+
+## Approved browser preparation
+
+The prepare-only Chrome extension supports official Greenhouse and Ashby forms,
+with approved PDF SHA256 checks, reviewed answers and dashboard readback snapshots.
+It has no submission feature. See [installation and limits](extension/README.md)
+and the [review handoff](extension/REVIEW.md). Real data stays outside this repo.
