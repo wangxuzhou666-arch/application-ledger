@@ -1,0 +1,26 @@
+{
+  "common": [
+    {
+      "label": "First Name",
+      "kind": "text",
+      "value": "Synthetic",
+      "confirmed": true
+    },
+    {
+      "label": "Email",
+      "kind": "text",
+      "value": "test@example.invalid",
+      "confirmed": true
+    }
+  ],
+  "jobs": {
+    "greenhouse/example/123": [
+      {
+        "label": "Future sponsorship",
+        "kind": "select",
+        "value": "Yes",
+        "confirmed": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "db": "/absolute/private/tracker.sqlite3",
+  "resume_root": "/absolute/private/resumes",
+  "master": "/absolute/private/applied-tracker.xlsx",
+  "answers": "/absolute/private/reviewed-answers.json",
+  "board_output": "/absolute/private/dashboard.html"
+}
