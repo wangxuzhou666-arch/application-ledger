@@ -1,18 +1,26 @@
-const output=document.querySelector("#status"),button=document.querySelector("#prepare");
+const output=document.querySelector("#status"),buttons=[...document.querySelectorAll("button")];
 function show(r){
  if(r.error){output.textContent="已停止："+r.error+"\n没有提交申请；请检查附件和页面后再操作。";return;}
  output.textContent=(r.status==="verified"?"本轮回读通过":"需要检查")+
  "\nPDF 指纹回读："+(r.fileVerified?"一致":"待核实")+
  "\n答案核对："+r.verified+"/"+r.matched+
- "\n待处理："+(r.pending+r.unknownRequired)+
+ "\n未答必填："+r.unansweredRequired+
+ r.reasons.map(code=>"\n· "+(LedgerCore.REASONS[code]||code)).join("")+
  "\n看板："+(r.boardRefreshed?"已更新":"未刷新，可运行工作台 board")+
  "\n未提交申请。";
+}
+function showScan(r){
+ if(r.error){output.textContent="扫描未完成："+r.error+"\n只读扫描，没有上传或填写。";return;}
+ output.textContent="题目清单已导出："+r.questions+" 道（必填 "+r.required+"，受保护 "+r.protected+"）"+
+ "\n文件：scan_dir/"+r.file+"\n只读扫描，没有上传、填写或提交。";
 }
 (async()=>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
  const old=(await chrome.storage.session.get("tab"+tab.id))["tab"+tab.id];
  try {if(old && old.identity===LedgerCore.identity(tab.url)){show(old);output.textContent+="\n上次快照："+old.at;}}
- catch {output.textContent="请打开官方 Greenhouse 或 Ashby 申请页。";button.disabled=true;}
- button.onclick=async()=>{button.disabled=true;output.textContent="正在核对批准版本、填写并等待页面解析…";
- try {const res=await chrome.runtime.sendMessage({op:"prepare",tabId:tab.id});show(res.ok?res.data:{error:res.error});}
- catch(e){show({error:e.message});}finally{button.disabled=false;}};
+ catch {output.textContent="请打开官方 Greenhouse 或 Ashby 申请页。";buttons.forEach(b=>b.disabled=true);}
+ const run=(op,waiting,render)=>async()=>{buttons.forEach(b=>b.disabled=true);output.textContent=waiting;
+  try {const res=await chrome.runtime.sendMessage({op,tabId:tab.id});render(res.ok?res.data:{error:res.error});}
+  catch(e){render({error:e.message});}finally{buttons.forEach(b=>b.disabled=false);}};
+ document.querySelector("#prepare").onclick=run("prepare","正在核对批准版本、填写并等待页面解析…",show);
+ document.querySelector("#scan").onclick=run("scan","正在只读扫描题目…",showScan);
 })();

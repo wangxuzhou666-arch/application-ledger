@@ -2,4 +2,7 @@
 <style>body{font:16px/1.6 system-ui;max-width:960px;margin:32px auto;color:#20363c}label{display:block;margin-top:10px}input,select{padding:7px}fieldset{margin:12px 0}#results{white-space:pre-wrap;background:#edf5ef;padding:20px}#sandbox{border:1px solid #ccc;padding:20px}button{padding:10px}</style>
 <h1>本地合成申请测试</h1><p>仅使用虚构身份与 PDF。不连接招聘网站，不提交申请。</p>
 <button type="button" id="run">运行验收测试</button><pre id="results">尚未运行</pre><div id="sandbox"></div>
+<!-- One React copy: a transitive CDN dependency pins react@18.0.0, which breaks hooks. -->
+<script type="importmap">{"imports":{"https://cdn.jsdelivr.net/npm/react@18.0.0/+esm":"https://cdn.jsdelivr.net/npm/react@18.2.0/+esm"}}</script>
+<script type="module" src="react-select-fixture.js"></script>
 <script src="../core.js"></script><script src="../content.js"></script><script src="fixtures.js"></script></html>

@@ -34,24 +34,39 @@ async function execute(tabId) {
   if(!report)throw Error("No page readback returned");
   if(LedgerCore.identity((await chrome.tabs.get(tabId)).url)!==expected)throw Error("Tab navigated during verification");
   const saved=await native({op:"report",url,run:meta.run,report});
-  // Persist only counts. No answers, filenames, PDF bytes or labels in extension storage.
-  const summary={identity:expected,at:new Date().toISOString(),...Object.fromEntries(["status","fileVerified","matched","verified","pending","unknownRequired"].map(k=>[k,report[k]])),...saved};
+  // Persist only counts and fixed reason codes. No answers, filenames, PDF bytes or labels in extension storage.
+  const summary={identity:expected,at:new Date().toISOString(),...Object.fromEntries(["status","fileVerified","matched","verified","pending","unansweredRequired","reasons"].map(k=>[k,report[k]])),...saved};
   await chrome.storage.session.set({["tab"+tabId]:summary});
   return summary;
  } catch(e) {
   // Do not retry upload on failure; the webpage may already have accepted it.
   const message=e.message||"Preparation failed";
   if(meta && !report) {
-   try {await native({op:"report",url,run:meta.run,report:{status:"failed",fileVerified:false,matched:0,verified:0,pending:0,unknownRequired:1}});}
+   try {await native({op:"report",url,run:meta.run,report:{status:"failed",fileVerified:false,matched:0,verified:0,pending:0,unansweredRequired:0,reasons:[]}});}
    catch { /* Approval may have been revoked; never retry an upload to recover bookkeeping. */ }
   }
   await chrome.storage.session.set({["tab"+tabId]:{identity:meta?.identity,at:new Date().toISOString(),error:message,submission:"not_attempted"}});
   throw e;
  } finally {running.delete(tabId);}
 }
+// Read-only: lists the questions on the page for answer drafting. No PDF, no filling, no run.
+async function scan(tabId) {
+ if(running.has(tabId))throw Error("Already working on this tab");
+ running.add(tabId);
+ try {
+  const url=(await chrome.tabs.get(tabId)).url, expected=LedgerCore.identity(url);
+  await chrome.scripting.executeScript({target:{tabId},files:["core.js","content.js"]});
+  const results=await chrome.scripting.executeScript({target:{tabId},func:async()=>await globalThis.LedgerPrep.scan()});
+  const found=results[0]?.result;
+  if(!found)throw Error("No page scan returned");
+  if(LedgerCore.identity((await chrome.tabs.get(tabId)).url)!==expected)throw Error("Tab navigated during scan");
+  return await native({op:"scan",url,scan:found});
+ } finally {running.delete(tabId);}
+}
 chrome.runtime.onMessage.addListener((request,sender,sendResponse)=>{
  if(sender.id!==chrome.runtime.id || sender.url!==chrome.runtime.getURL("popup.html"))return false;
- if(request.op!=="prepare" || !Number.isInteger(request.tabId))return false;
- execute(request.tabId).then(data=>sendResponse({ok:true,data}),e=>sendResponse({ok:false,error:e.message}));
+ const task=request.op==="prepare"?execute:request.op==="scan"?scan:null;
+ if(!task || !Number.isInteger(request.tabId))return false;
+ task(request.tabId).then(data=>sendResponse({ok:true,data}),e=>sendResponse({ok:false,error:e.message}));
  return true;
 });

@@ -9,12 +9,17 @@ test("canonical Greenhouse and Ashby identity",()=>{
 });
 test("reject unsupported and ambiguous targets",()=>{
  for(const url of ["https://evil.example/demo/jobs/123","http://job-boards.greenhouse.io/demo/jobs/123",
- "https://job-boards.greenhouse.io/demo/jobs/123#changed","https://boards.greenhouse.io/embed/job_app?for=a&for=b&token=123"])
+ "https://boards.greenhouse.io/embed/job_app?for=a&for=b&token=123"])
  assert.throws(()=>c.identity(url));
 });
-test("consent and signatures protected",()=>{
- for(const text of ["Privacy Policy","I agree","Electronic signature","Veteran status"])assert.ok(c.protectedLabel(text));
- assert.equal(c.protectedLabel("Email"),false);
+test("fragment ignored, same identity as Python bridge",()=>{
+ assert.equal(c.identity("https://job-boards.greenhouse.io/demo/jobs/123#changed"),"greenhouse/demo/123");
+ assert.equal(c.identity("https://jobs.ashbyhq.com/demo/12345678-1234-1234-1234-123456789abc/application#form"),"ashby/demo/12345678-1234-1234-1234-123456789abc");
+});
+test("protected labels by whole word (shared table with Python)",()=>{
+ const table=require("./protected-labels.json");
+ for(const text of table.protected)assert.ok(c.protectedLabel(text),text);
+ for(const text of table.fillable)assert.equal(c.protectedLabel(text),false,text);
 });
 test("exact label normalization only",()=>{
  assert.equal(c.norm("First Name *"),"First Name");assert.notEqual(c.norm("Name"),c.norm("First Name"));

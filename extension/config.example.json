@@ -3,5 +3,6 @@
   "resume_root": "/absolute/private/resumes",
   "master": "/absolute/private/applied-tracker.xlsx",
   "answers": "/absolute/private/reviewed-answers.json",
-  "board_output": "/absolute/private/dashboard.html"
+  "board_output": "/absolute/private/dashboard.html",
+  "scan_dir": "/absolute/private/form-scans"
 }

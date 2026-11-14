@@ -17,6 +17,11 @@ GROUPS=[
  ('投递中',('approved','awaiting_receipt'),'已批准的继续填表。待回执的先查证，避免重投。'),
  ('已投与面试',('applied','assessment','interview','offer','accepted'),'关注回执、测评、面试及录用进展。'),
  ('暂停与结束',('paused','skipped','closed','rejected','withdrawn'),'保留理由和历史，供下轮去重。')]
+# Chinese text for prepare_bridge.REASONS; keys must match it and REASONS in extension/core.js.
+REASON_TEXT={'file_not_shown':'附件区没有显示简历文件名','file_input_reset':'页面清空或替换了附件输入框，已按附件区显示的文件名核验',
+ 'file_mismatch':'附件输入框里的文件与批准版本不一致','captcha_challenge':'出现需要本人完成的验证码','page_error':'页面显示了错误提示',
+ 'unknown_required':'有必填题不在已审答案里','unanswered_buttons':'有必填的是/否题没有作答','field_readback_failed':'有答案填写后回读不一致',
+ 'combobox_unbound':'下拉框没有给出可核对的选项列表','option_not_found':'下拉选项缺失或不唯一'}
 LABEL=dict(zip('review lead hold approved awaiting_receipt applied assessment interview offer accepted paused skipped closed rejected withdrawn'.split(),
                '待审阅 新线索 待核实 已批准 待核对回执 已投待反馈 测评 面试 Offer 已接受 暂停 已跳过 已关闭 已拒绝 已撤回'.split()))
 
@@ -63,9 +68,12 @@ def render(db, resources=(), materials=None):
                 at = datetime.fromtimestamp(prep['created']).astimezone().isoformat(timespec='minutes')
                 out.append('<p><b>插件准备记录（未提交）</b>　'+h(state)+' · '+h(at)+'</p>')
                 if result:
+                    # v0.1 reports stored unknownRequired and no reasons.
+                    unanswered = result.get('unansweredRequired', result.get('unknownRequired', 0))
+                    reasons = '；'.join(REASON_TEXT[r] for r in result.get('reasons', []))
                     out.append('<p>PDF 指纹回读：'+('一致' if result.get('fileVerified') else '待核实')+
                         ' · 已核对 '+str(result.get('verified',0))+'/'+str(result.get('matched',0))+
-                        ' · 待处理 '+str(result.get('pending',0)+result.get('unknownRequired',0))+'。这是当次页面快照，不是申请回执。</p>')
+                        ' · 未答必填 '+str(unanswered)+(' · 原因：'+h(reasons) if reasons else '')+'。这是当次页面快照，不是申请回执。</p>')
             out.append('<ul>'+''.join(f'<li>{h(e["recorded_at"][:10])} · {LABEL[e["stage"]]} · {h(e["note"])}</li>' for e in events[k])+'</ul></details>')
         out.append('</section>')
     out.append('<h2 id="sources">渠道刷新记录</h2><p>新增是待核实线索。读取失败不等于该渠道没有岗位。时间为 UTC。</p><table><tr><th>时间 / 来源</th><th>读取</th><th>标题匹配</th><th>新增</th><th>结果</th></tr>')

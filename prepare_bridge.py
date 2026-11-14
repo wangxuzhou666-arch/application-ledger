@@ -12,6 +12,7 @@ import secrets
 import sqlite3
 import struct
 import sys
+from tempfile import NamedTemporaryFile
 import time
 from urllib.parse import parse_qs, urlsplit
 
@@ -20,14 +21,25 @@ CHUNK = 256 * 1024
 MAX_MESSAGE = 64 * 1024
 HOST_NAME = "org.application_ledger.prepare"
 STATES = {"verified", "needs_attention", "failed"}
-PROTECTED = re.compile(r"privacy|consent|agree|signature|certif|attest|captcha|race|ethnic|gender|disab|veteran", re.I)
+# Whole words only, so "embrace" and "Certifications" stay fillable. Must equal PROTECTED in extension/core.js.
+PROTECTED = re.compile(r"\b(?:privacy|consent\w*|agree\w*|signature\w*|e-?sign\w*|certify|attest\w*|captcha|race|racial|ethnic\w*|hispanic|latin[aox]\w*|gender\w*|transgender|sex|sexual|disab\w*|veteran\w*)\b", re.I | re.A)
+# Fixed codes the browser may report; keys of REASONS in extension/core.js and REASON_TEXT in board.py.
+REASONS = ("file_not_shown", "file_input_reset", "file_mismatch", "captcha_challenge", "page_error",
+           "unknown_required", "unanswered_buttons", "field_readback_failed", "combobox_unbound", "option_not_found")
+# Evidence notes that may accompany a verified run; every other code means the page needs a person.
+NOTE_REASONS = {"file_input_reset"}
+ANSWER_KINDS = {"text", "select", "radio", "combobox", "yesno"}
+SCAN_KINDS = {"text", "select", "radio", "combobox", "yesno", "checkbox", "file", "unsupported"}
+SCAN_KEYS = {"label", "kind", "required", "protected", "options", "optionsTruncated"}
+MAX_QUESTIONS = 150
 
 class Refused(ValueError):
     pass
 
 def identity(url):
     u = urlsplit(url)
-    if u.scheme != "https" or u.username or u.password or u.port or u.fragment:
+    # A #fragment never identifies a job; urlsplit keeps it out of path and query.
+    if u.scheme != "https" or u.username or u.password or u.port:
         raise Refused("Unsupported job URL")
     parts = u.path.strip("/").split("/")
     if u.hostname == "jobs.ashbyhq.com":
@@ -122,12 +134,53 @@ def reviewed_fields(config, job_id):
             raise Refused("Invalid field label")
         if not isinstance(value, str) or not value.strip() or len(value) > 10000:
             raise Refused("Invalid reviewed value")
-        if kind not in {"text", "select", "radio", "combobox"} or PROTECTED.search(label):
+        if kind not in ANSWER_KINDS or PROTECTED.search(label):
             raise Refused("Protected/unsupported field must be handled manually")
+        if kind == "yesno" and value not in ("Yes", "No"):
+            raise Refused("Yes/No answers must be exactly Yes or No")
         selected[label] = {"label": label, "value": value, "kind": kind}
     if len(selected) > 100:
         raise Refused("Too many reviewed fields")
     return list(selected.values())
+
+def clean_report(report):
+    """Counts and fixed reason codes only; never arbitrary browser text."""
+    if not isinstance(report, dict) or report.get("status") not in STATES:
+        raise Refused("Invalid preparation result")
+    clean = {"status": report["status"], "fileVerified": report.get("fileVerified") is True}
+    for key in ("matched", "verified", "pending", "unansweredRequired"):
+        value = report.get(key)
+        if type(value) is not int or not 0 <= value <= 500:
+            raise Refused("Invalid report counts")
+        clean[key] = value
+    reasons = report.get("reasons")
+    if not isinstance(reasons, list) or not all(r in REASONS for r in reasons) or len(set(reasons)) != len(reasons):
+        raise Refused("Invalid reason codes")
+    clean["reasons"] = reasons
+    if clean["verified"] > clean["matched"]:
+        raise Refused("Invalid verification count")
+    unresolved = clean["pending"] or clean["unansweredRequired"] or clean["matched"] != clean["verified"] or set(reasons) - NOTE_REASONS
+    if clean["status"] == "verified" and (not clean["fileVerified"] or unresolved):
+        raise Refused("Cannot claim verification with unresolved fields")
+    return clean
+
+def clean_scan(scan):
+    """Structure and size checks for a page scan. Protection is recomputed here, not trusted."""
+    questions = scan.get("questions") if isinstance(scan, dict) and set(scan) == {"questions"} else None
+    if not isinstance(questions, list) or len(questions) > MAX_QUESTIONS:
+        raise Refused("Invalid scan")
+    clean = []
+    for q in questions:
+        if not isinstance(q, dict) or set(q) != SCAN_KEYS or not isinstance(q["kind"], str) or q["kind"] not in SCAN_KINDS:
+            raise Refused("Invalid scan question")
+        if not isinstance(q["label"], str) or len(q["label"]) > 300 or any(type(q[k]) is not bool for k in ("required", "protected", "optionsTruncated")):
+            raise Refused("Invalid scan question")
+        options = q["options"]
+        if options is not None and (not isinstance(options, list) or len(options) > 30 or not all(isinstance(o, str) and len(o) <= 150 for o in options)):
+            raise Refused("Invalid scan options")
+        clean.append({"label": q["label"], "kind": q["kind"], "required": q["required"],
+                      "protected": bool(PROTECTED.search(q["label"])), "options": options, "optionsTruncated": q["optionsTruncated"]})
+    return clean
 
 class Bridge:
     def __init__(self, config):
@@ -212,10 +265,31 @@ class Bridge:
             raise Refused("Approved packet changed during preparation")
         return r, v
 
+    def scan(self, request):
+        # Read-only question export: needs no approval, issues no PDF and creates no preparation run.
+        jid = identity(request["url"])
+        if not self.config.get("scan_dir"):
+            raise Refused("scan_dir is not configured in the private config")
+        directory = Path(self.config["scan_dir"]).expanduser()
+        if not directory.is_dir():
+            raise Refused("scan_dir must be an existing directory")
+        questions = clean_scan(request.get("scan"))
+        # The file name comes only from the canonical identity, never from the browser.
+        target = directory.resolve(strict=True) / (jid.replace("/", ".") + ".json")
+        doc = {"identity": jid, "scannedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "questions": questions}
+        with NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, suffix=".tmp", delete=False) as stream:
+            json.dump(doc, stream, ensure_ascii=False, indent=1)
+        os.replace(stream.name, target)
+        return {"saved": True, "file": target.name, "questions": len(questions),
+                "required": sum(q["required"] for q in questions), "protected": sum(q["protected"] for q in questions),
+                "submission": "not_attempted"}
+
     def handle(self, request):
         if not isinstance(request, dict):
             raise Refused("Invalid request")
         op = request.get("op")
+        if op == "scan":
+            return self.scan(request)
         if op == "prepare":
             j, rec, pdf, data, digest, fields = self.validate(request["url"])
             run = secrets.token_hex(24)
@@ -240,20 +314,7 @@ class Bridge:
             return {"valid": True}
         if op == "report":
             r, v = self.session(request)
-            report = request.get("report", {})
-            if report.get("status") not in STATES:
-                raise Refused("Invalid preparation result")
-            # Persist counts and fixed reason codes only. Never trust arbitrary browser text.
-            clean = {"status": report["status"], "fileVerified": report.get("fileVerified") is True}
-            for key in ("matched", "verified", "pending", "unknownRequired"):
-                value = report.get(key)
-                if type(value) is not int or not 0 <= value <= 500:
-                    raise Refused("Invalid report counts")
-                clean[key] = value
-            if clean["verified"] > clean["matched"]:
-                raise Refused("Invalid verification count")
-            if clean["status"] == "verified" and (not clean["fileVerified"] or clean["pending"] or clean["unknownRequired"] or clean["matched"] != clean["verified"]):
-                raise Refused("Cannot claim verification with unresolved fields")
+            clean = clean_report(request.get("report"))
             with self.db:
                 self.db.execute("UPDATE preparation_runs SET status=?,report=? WHERE run=? AND status='started'",
                                 (clean["status"], json.dumps(clean), r["run"]))

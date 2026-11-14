@@ -7,6 +7,7 @@ import struct
 import subprocess
 import sys
 import os
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -49,7 +50,7 @@ class PrepareTest(unittest.TestCase):
         meta=self.prepare()
         chunk=self.b.handle(dict(op="chunk",url=self.url,run=meta["run"],offset=0))
         self.assertEqual(base64.b64decode(chunk["base64"]),self.pdf.read_bytes())
-        report=dict(status="verified",fileVerified=True,matched=1,verified=1,pending=0,unknownRequired=0)
+        report=dict(status="verified",fileVerified=True,matched=1,verified=1,pending=0,unansweredRequired=0,reasons=[])
         result=self.b.handle(dict(op="report",url=self.url,run=meta["run"],report=report))
         self.assertTrue(result["recorded"]);self.assertTrue(result["boardRefreshed"])
         self.assertEqual(ledger.row(self.db,("Example","123"))["stage"],"approved")
@@ -93,7 +94,7 @@ class PrepareTest(unittest.TestCase):
             with self.assertRaises(bridge.Refused):self.b.handle(dict(op=op,path="/etc/passwd"))
     def test_expiration_and_report_validation(self):
         meta=self.prepare()
-        invalid=dict(status="verified",fileVerified=False,matched=1,verified=1,pending=0,unknownRequired=0)
+        invalid=dict(status="verified",fileVerified=False,matched=1,verified=1,pending=0,unansweredRequired=0,reasons=[])
         with self.assertRaises(bridge.Refused):
             self.b.handle(dict(op="report",url=self.url,run=meta["run"],report=invalid))
         with self.b.db:self.b.db.execute("UPDATE preparation_runs SET created=0")
@@ -155,9 +156,101 @@ class PrepareTest(unittest.TestCase):
         self.assertEqual(bridge.identity(self.url+"?gh_src=x"),"greenhouse/example/123")
         self.assertEqual(bridge.identity("https://boards.greenhouse.io/embed/job_app?for=example&token=123"),"greenhouse/example/123")
         self.assertEqual(bridge.identity("https://jobs.ashbyhq.com/demo/12345678-1234-1234-1234-123456789abc/application"),"ashby/demo/12345678-1234-1234-1234-123456789abc")
+        # A fragment is ignored, never part of the identity.
+        self.assertEqual(bridge.identity(self.url+"#other"),"greenhouse/example/123")
+        self.assertEqual(bridge.identity("https://jobs.ashbyhq.com/demo/12345678-1234-1234-1234-123456789abc/application#form"),"ashby/demo/12345678-1234-1234-1234-123456789abc")
         for url in ("https://evil.example/example/jobs/123","http://job-boards.greenhouse.io/example/jobs/123",
-            self.url+"#other","https://boards.greenhouse.io/embed/job_app?for=a&for=b&token=123"):
+            "https://boards.greenhouse.io/embed/job_app?for=a&for=b&token=123"):
             with self.assertRaises(bridge.Refused):bridge.identity(url)
+
+    def report(self,meta,**changes):
+        body=dict(status="needs_attention",fileVerified=True,matched=1,verified=1,pending=0,unansweredRequired=0,reasons=[])
+        body.update(changes)
+        return self.b.handle(dict(op="report",url=self.url,run=meta["run"],report=body))
+    def stored(self,meta):
+        row=self.db.execute("SELECT status,report FROM preparation_runs WHERE run=?",(meta["run"],)).fetchone()
+        return row["status"],json.loads(row["report"])
+    def test_report_reason_codes_whitelisted(self):
+        meta=self.prepare()
+        for bad in (["not_a_code"],"file_not_shown",[["file_not_shown"]],["file_not_shown","file_not_shown"],None,[{"code":"page_error"}]):
+            with self.assertRaises(bridge.Refused):self.report(meta,reasons=bad)
+        with self.assertRaises(bridge.Refused):self.report(meta,unknownRequired=0,unansweredRequired=None)
+        self.report(meta,reasons=["captcha_challenge","unanswered_buttons"],unansweredRequired=2,label="secret",fields=[{"label":"x"}])
+        status,stored=self.stored(meta)
+        self.assertEqual(status,"needs_attention")
+        self.assertEqual(stored,dict(status="needs_attention",fileVerified=True,matched=1,verified=1,pending=0,unansweredRequired=2,
+                                     reasons=["captcha_challenge","unanswered_buttons"]))
+        page=Path(self.config["board_output"]).read_text()
+        self.assertIn("出现需要本人完成的验证码",page);self.assertIn("未答必填 2",page);self.assertNotIn("secret",page)
+    def test_verified_requires_no_blocking_reason_or_unanswered(self):
+        meta=self.prepare()
+        for changes in (dict(reasons=["captcha_challenge"]),dict(reasons=["file_not_shown"]),dict(unansweredRequired=1),dict(pending=1,verified=0)):
+            with self.assertRaises(bridge.Refused):self.report(meta,status="verified",**changes)
+        # Display-based file evidence is a note, not a blocker.
+        self.report(meta,status="verified",reasons=["file_input_reset"])
+        self.assertEqual(self.stored(meta)[0],"verified")
+    def test_v01_report_rows_still_render(self):
+        with self.db:
+            self.db.execute("INSERT INTO preparation_runs(run,employer,requisition,token,digest,identity,created,status,report) VALUES(?,?,?,?,?,?,?,?,?)",
+                ("old","Example","123",self.token,"d","greenhouse/example/123",1.0,"needs_attention",
+                 json.dumps(dict(status="needs_attention",fileVerified=True,matched=1,verified=1,pending=0,unknownRequired=3))))
+        self.assertIn("未答必填 3",board.render(self.db))
+    def test_reason_codes_match_extension_and_board(self):
+        core=(Path(__file__).parent/"extension/core.js").read_text()
+        block=re.search(r"const REASONS = \{(.*?)\};",core,re.S).group(1)
+        self.assertEqual(dict(re.findall(r'^\s*(\w+): "(.*?)"',block,re.M)),board.REASON_TEXT)
+        self.assertEqual(tuple(board.REASON_TEXT),bridge.REASONS)
+        self.assertLessEqual(bridge.NOTE_REASONS,set(bridge.REASONS))
+    def test_protected_whole_words_match_extension(self):
+        core=(Path(__file__).parent/"extension/core.js").read_text()
+        self.assertEqual(re.search(r"const PROTECTED = /(.*)/i;",core).group(1),bridge.PROTECTED.pattern)
+        table=json.loads((Path(__file__).parent/"extension/tests/protected-labels.json").read_text())
+        for text in table["protected"]:self.assertTrue(bridge.PROTECTED.search(text),text)
+        for text in table["fillable"]:self.assertIsNone(bridge.PROTECTED.search(text),text)
+    def test_yesno_answers_exactly_yes_or_no(self):
+        jid="greenhouse/example/123"
+        self.answers.write_text(json.dumps(dict(common=[dict(label="Can you work onsite?",kind="yesno",value="No",confirmed=True)])))
+        self.assertEqual(bridge.reviewed_fields(self.config,jid),[dict(label="Can you work onsite?",value="No",kind="yesno")])
+        for value in ("yes","Y","Maybe"," No"):
+            self.answers.write_text(json.dumps(dict(common=[dict(label="Can you work onsite?",kind="yesno",value=value,confirmed=True)])))
+            with self.assertRaises(bridge.Refused):bridge.reviewed_fields(self.config,jid)
+    def question(self,**changes):
+        q=dict(label="Are you open to relocation?",kind="combobox",required=True,protected=False,options=["Yes","No"],optionsTruncated=False)
+        q.update(changes)
+        return q
+    def test_scan_requires_scan_dir(self):
+        with self.assertRaises(bridge.Refused) as caught:
+            self.b.handle(dict(op="scan",url=self.url,scan=dict(questions=[self.question()])))
+        self.assertIn("scan_dir",str(caught.exception))
+        self.b.config=dict(self.config,scan_dir=str(self.root/"missing"))
+        with self.assertRaises(bridge.Refused):self.b.handle(dict(op="scan",url=self.url,scan=dict(questions=[])))
+    def test_scan_needs_no_approval_and_names_file_from_identity(self):
+        scans=self.root/"scans";scans.mkdir()
+        self.b.config=dict(self.config,scan_dir=str(scans))
+        with self.db:self.db.execute("UPDATE jobs SET stage='review'")
+        url="https://job-boards.greenhouse.io/other/jobs/999#questions"
+        sent=[self.question(),self.question(label="Gender",kind="select",options=["A","B"]),self.question(label="Bio",kind="text",required=False,options=None)]
+        result=self.b.handle(dict(op="scan",url=url,path="/etc/passwd",file="../../evil.json",scan=dict(questions=sent)))
+        self.assertEqual(result,dict(saved=True,file="greenhouse.other.999.json",questions=3,required=2,protected=1,submission="not_attempted"))
+        self.assertEqual([p.name for p in scans.iterdir()],["greenhouse.other.999.json"])
+        doc=json.loads((scans/"greenhouse.other.999.json").read_text())
+        self.assertEqual(doc["identity"],"greenhouse/other/999")
+        # Protection is recomputed by the bridge, whatever the browser claimed.
+        self.assertEqual([q["protected"] for q in doc["questions"]],[False,True,False])
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM preparation_runs").fetchone()[0],0)
+    def test_scan_structure_and_size_validated(self):
+        scans=self.root/"scans";scans.mkdir()
+        self.b.config=dict(self.config,scan_dir=str(scans))
+        bad=[dict(questions=[self.question(kind="password")]),dict(questions=[self.question(label="x"*301)]),
+             dict(questions=[self.question(options=["o"]*31)]),dict(questions=[self.question(options=["o"*151])]),
+             dict(questions=[self.question(required="yes")]),dict(questions=[dict(self.question(),value="secret")]),
+             dict(questions=[self.question(options="Yes,No")]),dict(questions=[self.question(kind=["text"])]),
+             dict(questions=[self.question()]*151),dict(questions=[],path="/tmp/x"),[self.question()],None]
+        for scan in bad:
+            with self.assertRaises(bridge.Refused):self.b.handle(dict(op="scan",url=self.url,scan=scan))
+        for url in ("https://evil.example/example/jobs/123","https://job-boards.greenhouse.io/example"):
+            with self.assertRaises(bridge.Refused):self.b.handle(dict(op="scan",url=url,scan=dict(questions=[])))
+        self.assertEqual(list(scans.iterdir()),[])
 
 class MasterTest(unittest.TestCase):
     def test_real_workbook_read_only_and_duplicate(self):
